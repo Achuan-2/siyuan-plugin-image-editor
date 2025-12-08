@@ -1,7 +1,7 @@
 {
-  "name": "siyuan-plugin-templates",
+  "name": "siyuan-plugin-image-editor",
   "author": "Achuan-2",
-  "url": "https://github.com/Achuan-2/siyuan-plugin-templates",
+  "url": "https://github.com/Achuan-2/siyuan-plugin-image-editor",
   "version": "0.0.1",
   "minAppVersion": "3.0.12",
   "backends": [
@@ -10,14 +10,14 @@
   "frontends": [
     "all"
   ],
-  "disabledInPublish": true,
+  "disabledInPublish": false,
   "displayName": {
-    "default": "Plugin Template",
-    "zh_CN": "插件模板"
+    "default": "Image Editor",
+    "zh_CN": "图片编辑器"
   },
   "description": {
-    "default": "",
-    "zh_CN": ""
+    "default": "Edit images in SiYuan with crop, shapes, arrows, text, markers and more. Supports re-editing.",
+    "zh_CN": "在思源笔记中编辑图片，支持裁剪、形状、箭头、文字、马克笔等功能，支持二次编辑"
   },
   "readme": {
     "default": "README.md",
@@ -28,5 +28,11 @@
       "https://fastly.jsdelivr.net/gh/Achuan-2/PicBed/assets/20241128221208-2024-11-28.png"
     ]
   },
-  "keywords": []
+  "keywords": [
+    "image",
+    "editor",
+    "annotation",
+    "screenshot",
+    "markup"
+  ]
 }
