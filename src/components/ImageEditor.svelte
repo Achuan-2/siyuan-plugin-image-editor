@@ -128,20 +128,24 @@
         try {
             imageEditor?.destroy?.();
         } catch (e) {}
-        // Init image editor
-        imageEditor = new ImageEditor(editorEl, {
+        
+        // Prepare options object first (before initializing editor)
+        const editorOptions = {
             includeUI: {
                 loadImage: { path: publicURL, name: originalFileName },
                 theme: {},
             },
             cssMaxWidth: 700,
             cssMaxHeight: 500,
-        });
+        };
+        
+        // Init image editor with pre-configured options
+        imageEditor = new ImageEditor(editorEl, editorOptions);
+        
         // After init we explicitly load image so we can then restore state
         editorReady = false;
         lastPublicURL = publicURL;
         if (backupBlobUrl) lastBlobURL = backupBlobUrl;
-        // removed verifyAndLoad (not used)
 
         // Prefer to load backup blob if available (backupBlobUrl)
         imageEditor
@@ -154,6 +158,11 @@
                         canvas.loadFromJSON(editorData.canvasJSON);
                         canvas.discardActiveObject();
                         canvas.renderAll();
+                    }
+                    // Re-activate UI menu to prevent modeChange errors
+                    // This is a known fix for TUI Image Editor UI state issues
+                    if (imageEditor.ui && typeof imageEditor.ui.activeMenuEvent === 'function') {
+                        imageEditor.ui.activeMenuEvent();
                     }
                     editorReady = true;
                 } catch (e) {
@@ -176,6 +185,10 @@
                         canvas.loadFromJSON(editorData.canvasJSON);
                         canvas.discardActiveObject();
                         canvas.renderAll();
+                    }
+                    // Re-activate UI menu to prevent modeChange errors
+                    if (imageEditor.ui && typeof imageEditor.ui.activeMenuEvent === 'function') {
+                        imageEditor.ui.activeMenuEvent();
                     }
                     editorReady = true;
                 } catch (e) {
@@ -301,6 +314,10 @@
             } catch (e) {
                 console.warn('DOM update failed', e);
             }
+            
+            // Close the editor after successful save
+            // If user wants to continue editing, they can reopen the editor
+            // which will properly load the saved image with all metadata
             onClose?.(true);
         } catch (e) {
             console.error(e);
