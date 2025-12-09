@@ -2,3 +2,5 @@
 
 - 支持裁剪、添加文字、添加矩形等功能
 - 保存png图片支持二次编辑之前的标记
+
+![](https://fastly.jsdelivr.net/gh/Achuan-2/PicBed/assets/20251209155326-2025-12-09.png)
