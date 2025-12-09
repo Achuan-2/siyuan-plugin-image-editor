@@ -22,6 +22,13 @@
     let lastBlobURL = '';
     let hasExistingMetadata = false; // Track if image already has editor metadata
     const STORAGE_BACKUP_DIR = 'data/storage/petal/siyuan-plugin-image-editor/backup';
+    
+    // Custom crop state
+    let cropMode = false;
+    let cropRect: fabric.Rect | null = null;
+    let originalImageDimensions = { width: 0, height: 0 };
+    let cropData: { left: number; top: number; width: number; height: number } | null = null;
+    let isCropped = false;
 
     async function blobToDataURL(blob: Blob): Promise<string> {
         return new Promise((resolve, reject) => {
@@ -146,11 +153,68 @@
                 try {
                     const canvas =
                         imageEditor.getCanvas?.() ?? imageEditor._graphics?.getCanvas?.() ?? null;
-                    if (editorData && editorData.canvasJSON) {
-                        canvas.loadFromJSON(editorData.canvasJSON);
-                        canvas.discardActiveObject();
-                        canvas.renderAll();
+                    // Restore metadata variables first
+                    if (editorData && editorData.cropData) {
+                        cropData = editorData.cropData;
+                        isCropped = true;
                     }
+                    
+                    // Restore original image dimensions if available
+                    if (editorData && editorData.originalImageDimensions) {
+                        originalImageDimensions = editorData.originalImageDimensions;
+                    }
+
+                    if (editorData && editorData.canvasJSON) {
+                        canvas.loadFromJSON(editorData.canvasJSON, () => {
+                            // If cropped, we must resize the canvas to match the crop dimensions
+                            if (isCropped && cropData) {
+                                console.log('Loading cropped image with cropData:', cropData);
+                                console.log('Canvas size before resize:', canvas.getWidth(), 'x', canvas.getHeight());
+                                
+                                canvas.setWidth(cropData.width);
+                                canvas.setHeight(cropData.height);
+                                
+                                console.log('Canvas size after resize:', canvas.getWidth(), 'x', canvas.getHeight());
+                                
+                                // CRITICAL FIX: The background image was loaded at (0,0) by loadImageFromURL
+                                // We need to shift it to show the cropped region
+                                // The background should be at negative offset to show the crop area
+                                if (canvas.backgroundImage) {
+                                    const bg = canvas.backgroundImage;
+                                    console.log('Background image position BEFORE adjustment:', {
+                                        left: bg.left,
+                                        top: bg.top,
+                                        width: bg.width,
+                                        height: bg.height
+                                    });
+                                    
+                                    // Set background position to negative crop offset
+                                    // This makes the visible canvas area show the cropped region
+                                    bg.left = -cropData.left;
+                                    bg.top = -cropData.top;
+                                    bg.setCoords();
+                                    
+                                    console.log('Background image position AFTER adjustment:', {
+                                        left: bg.left,
+                                        top: bg.top
+                                    });
+                                }
+                            }
+
+                            // After loading JSON and potential resize, ensure wrapper size matches
+                            const canvasContainer = editorEl.querySelector('.lower-canvas')?.parentElement;
+                            if (canvasContainer) {
+                                const canvasWrapper = canvasContainer.querySelector('.canvas-container') as HTMLElement;
+                                if (canvasWrapper) {
+                                    canvasWrapper.style.width = `${canvas.getWidth()}px`;
+                                    canvasWrapper.style.height = `${canvas.getHeight()}px`;
+                                }
+                            }
+                            canvas.requestRenderAll();
+                        });
+                        canvas.discardActiveObject();
+                    }
+                    
                     // Re-activate UI menu to prevent modeChange errors
                     // This is a known fix for TUI Image Editor UI state issues
                     if (imageEditor.ui && typeof imageEditor.ui.activeMenuEvent === 'function') {
@@ -217,6 +281,8 @@
                 originalBlockId: blockId,
                 originalBackupPath: origBackupPath,
                 canvasJSON,
+                cropData: isCropped ? cropData : null,
+                originalImageDimensions: originalImageDimensions.width > 0 ? originalImageDimensions : null,
             });
             const newBuffer = insertPNGTextChunk(buffer, 'siyuan-image-editor', metaValue);
             // Convert Uint8Array to ArrayBuffer for Blob constructor
@@ -360,6 +426,284 @@
         updateZoom(1.0);
     }
 
+    function enterCropMode() {
+        if (!imageEditor) return;
+        const canvas = getCanvasSafe();
+        if (!canvas) return;
+        
+        // Stop any active drawing mode in TUI
+        try {
+            imageEditor.stopDrawingMode();
+        } catch (e) {
+            console.warn('Failed to stop drawing mode:', e);
+        }
+        
+        cropMode = true;
+        
+        // Deselect all objects
+        canvas.discardActiveObject();
+        
+        // Get current canvas dimensions (which might be the cropped size)
+        let canvasWidth = canvas.getWidth();
+        let canvasHeight = canvas.getHeight();
+        
+        // Store original image dimensions if not already stored
+        if (originalImageDimensions.width === 0) {
+            originalImageDimensions = { width: canvasWidth, height: canvasHeight };
+        }
+        
+        // If this image is currently in a cropped state, we need to restore the full view
+        if (isCropped && cropData) {
+            // Restore original canvas size
+            canvas.setWidth(originalImageDimensions.width);
+            canvas.setHeight(originalImageDimensions.height);
+            
+            // Adjust all objects' positions back to original coordinates
+            const objects = canvas.getObjects(); 
+            objects.forEach((obj: any) => {
+                // Skip if obj is somehow the crop rect (shouldn't happen here but safe guard)
+                if(obj._isCropRect) return;
+                
+                obj.left = (obj.left || 0) + cropData.left;
+                obj.top = (obj.top || 0) + cropData.top;
+                obj.setCoords();
+            });
+            
+            // Fix: Also move background image if it exists
+            if (canvas.backgroundImage) {
+                const bg = canvas.backgroundImage;
+                bg.left = (bg.left || 0) + cropData.left;
+                bg.top = (bg.top || 0) + cropData.top;
+                bg.setCoords();
+            }
+            
+            // Update wrapper size to match restored canvas
+            const canvasContainer = editorEl.querySelector('.lower-canvas')?.parentElement;
+            if (canvasContainer) {
+                const canvasWrapper = canvasContainer.querySelector('.canvas-container') as HTMLElement;
+                if (canvasWrapper) {
+                    canvasWrapper.style.width = `${originalImageDimensions.width}px`;
+                    canvasWrapper.style.height = `${originalImageDimensions.height}px`;
+                }
+            }
+            
+            canvasWidth = originalImageDimensions.width;
+            canvasHeight = originalImageDimensions.height;
+        }
+        
+        // Calculate crop rectangle position
+        let rectLeft, rectTop, rectWidth, rectHeight;
+        
+        if (cropData) {
+            // Restore visual crop box to previous crop area
+            rectLeft = cropData.left;
+            rectTop = cropData.top;
+            rectWidth = cropData.width;
+            rectHeight = cropData.height;
+        } else {
+            // Default crop area (80% of canvas, centered)
+            rectWidth = canvasWidth * 0.8;
+            rectHeight = canvasHeight * 0.8;
+            rectLeft = (canvasWidth - rectWidth) / 2;
+            rectTop = (canvasHeight - rectHeight) / 2;
+        }
+        
+        // Create crop rectangle
+        cropRect = new (window as any).fabric.Rect({
+            left: rectLeft,
+            top: rectTop,
+            width: rectWidth,
+            height: rectHeight,
+            fill: 'rgba(0, 0, 0, 0.3)',
+            stroke: '#00ff00',
+            strokeWidth: 2,
+            strokeDashArray: [5, 5],
+            selectable: true,
+            hasControls: true,
+            hasBorders: true,
+            lockRotation: true,
+            cornerColor: '#00ff00',
+            cornerSize: 10,
+            transparentCorners: false,
+        });
+        // temporary flag to identify crop rect
+        (cropRect as any)._isCropRect = true; 
+        
+        canvas.add(cropRect);
+        canvas.setActiveObject(cropRect);
+        canvas.requestRenderAll();
+        
+        // Show crop instructions
+        pushMsg('拖动调整裁剪区域,按 Enter 确认裁剪,按 Esc 取消');
+    }
+
+    function exitCropMode(apply: boolean = false) {
+        const canvas = getCanvasSafe();
+        if (!canvas || !cropRect) {
+            cropMode = false;
+            return;
+        }
+        
+        if (apply) {
+            applyCrop();
+        } else {
+            // Remove the crop rectangle
+            canvas.remove(cropRect);
+            
+            // If we were in a cropped state before (and didn't apply a new one), 
+            // we need to restore the PREVIOUS crop view (re-crop effectively)
+            if (isCropped && cropData) {
+                // Restore cropped canvas size
+                canvas.setWidth(cropData.width);
+                canvas.setHeight(cropData.height);
+
+                // Adjust all objects' positions back to cropped coordinates (shift negative)
+                const objects = canvas.getObjects();
+                objects.forEach((obj: any) => {
+                    obj.left = (obj.left || 0) - cropData.left;
+                    obj.top = (obj.top || 0) - cropData.top;
+                    obj.setCoords();
+                });
+                
+                // Fix: Also move background image back
+                if (canvas.backgroundImage) {
+                    const bg = canvas.backgroundImage;
+                    bg.left = (bg.left || 0) - cropData.left;
+                    bg.top = (bg.top || 0) - cropData.top;
+                    bg.setCoords();
+                }
+
+                // Update wrapper size
+                const canvasContainer = editorEl.querySelector('.lower-canvas')?.parentElement;
+                if (canvasContainer) {
+                    const canvasWrapper = canvasContainer.querySelector('.canvas-container') as HTMLElement;
+                    if (canvasWrapper) {
+                        canvasWrapper.style.width = `${cropData.width}px`;
+                        canvasWrapper.style.height = `${cropData.height}px`;
+                    }
+                }
+            } else {
+                // Not cropped previously, just stay at full size
+                 // Update wrapper size just in case
+                const canvasContainer = editorEl.querySelector('.lower-canvas')?.parentElement;
+                if (canvasContainer) {
+                    const canvasWrapper = canvasContainer.querySelector('.canvas-container') as HTMLElement;
+                    if (canvasWrapper) {
+                        canvasWrapper.style.width = `${originalImageDimensions.width}px`;
+                        canvasWrapper.style.height = `${originalImageDimensions.height}px`;
+                    }
+                }
+            }
+            
+            canvas.requestRenderAll();
+        }
+        
+        cropRect = null;
+        cropMode = false;
+    }
+
+    function applyCrop() {
+        const canvas = getCanvasSafe();
+        if (!canvas || !cropRect) return;
+        
+        // Get crop rectangle bounds
+        const left = Math.max(0, cropRect.left || 0);
+        const top = Math.max(0, cropRect.top || 0);
+        const width = Math.min(cropRect.width * (cropRect.scaleX || 1), canvas.getWidth());
+        const height = Math.min(cropRect.height * (cropRect.scaleY || 1), canvas.getHeight());
+        
+        // Remove the crop rectangle FIRST so it is not included in checking
+        canvas.remove(cropRect);
+        
+        // Store crop data for next time
+        cropData = { left, top, width, height };
+        isCropped = true;
+        
+        // Adjust all objects' positions relative to crop area
+        const objects = canvas.getObjects();
+        objects.forEach((obj: any) => {
+            obj.left = (obj.left || 0) - left;
+            obj.top = (obj.top || 0) - top;
+            obj.setCoords();
+        });
+        
+        // Fix: Adjust background image
+        if (canvas.backgroundImage) {
+            const bg = canvas.backgroundImage;
+            bg.left = (bg.left || 0) - left;
+            bg.top = (bg.top || 0) - top;
+            bg.setCoords();
+        }
+        
+        // Set new canvas dimensions
+        canvas.setWidth(width);
+        canvas.setHeight(height);
+        
+        // Fix: Update wrapper size to prevent stretching
+        const canvasContainer = editorEl.querySelector('.lower-canvas')?.parentElement;
+        if (canvasContainer) {
+            const canvasWrapper = canvasContainer.querySelector('.canvas-container') as HTMLElement;
+            if (canvasWrapper) {
+                canvasWrapper.style.width = `${width}px`;
+                canvasWrapper.style.height = `${height}px`;
+            }
+        }
+        
+        // Reset viewport to ensure 1:1 view of the new crop
+        canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+        canvas.requestRenderAll();
+        
+        // If zoom indicator exists, update it or reset
+        updateZoom(1.0);
+        
+        pushMsg('裁剪已应用');
+    }
+
+    function setupCropButton() {
+        setTimeout(() => {
+            // Find and hide the original crop button
+            const originalCropBtn = editorEl.querySelector('.tie-btn-crop');
+            if (originalCropBtn) {
+                (originalCropBtn as HTMLElement).style.display = 'none';
+            }
+            
+            // Create custom crop button
+            const menu = editorEl.querySelector('.tui-image-editor-menu');
+            if (!menu) return;
+            
+            const customCropBtn = document.createElement('li');
+            customCropBtn.className = 'tui-image-editor-item normal custom-crop-btn';
+            customCropBtn.setAttribute('tooltip', '裁剪');
+            customCropBtn.innerHTML = `
+                <svg class="svg_ic-menu">
+                    <use xlink:href="#ic-crop" class="normal use-default"></use>
+                    <use xlink:href="#ic-crop" class="active use-default"></use>
+                </svg>
+            `;
+            customCropBtn.style.cursor = 'pointer';
+            
+            customCropBtn.addEventListener('click', () => {
+                if (cropMode) {
+                    // If already in crop mode, exit without applying
+                    exitCropMode(false);
+                    customCropBtn.classList.remove('crop-active');
+                } else {
+                    // Enter crop mode
+                    enterCropMode();
+                    customCropBtn.classList.add('crop-active');
+                }
+            });
+            
+            // Insert after the first menu item (or at the beginning)
+            const firstItem = menu.querySelector('.tui-image-editor-item');
+            if (firstItem) {
+                menu.insertBefore(customCropBtn, firstItem);
+            } else {
+                menu.appendChild(customCropBtn);
+            }
+        }, 300);
+    }
+
     function setupToolbarToggle() {
         if (!imageEditor || !imageEditor.ui) return;
         
@@ -399,14 +743,31 @@
                 }, true); // Use capture phase
             });
             
-            // Add keyboard shortcut: ESC to hide submenu
+            // Add keyboard shortcut: ESC to hide submenu or exit crop mode
             document.addEventListener('keydown', (e) => {
                 if (e.key === 'Escape') {
-                    const submenus = editorEl.querySelectorAll('.tui-image-editor-submenu');
-                    submenus.forEach((submenu: HTMLElement) => {
-                        submenu.style.display = 'none';
-                    });
-                    currentActiveMenu = null;
+                    if (cropMode) {
+                        // Exit crop mode without applying
+                        exitCropMode(false);
+                        // Remove active class from crop button
+                        const cropBtn = editorEl.querySelector('.custom-crop-btn');
+                        if (cropBtn) cropBtn.classList.remove('crop-active');
+                    } else {
+                        // Hide submenus
+                        const submenus = editorEl.querySelectorAll('.tui-image-editor-submenu');
+                        submenus.forEach((submenu: HTMLElement) => {
+                            submenu.style.display = 'none';
+                        });
+                        currentActiveMenu = null;
+                    }
+                } else if (e.key === 'Enter') {
+                    if (cropMode) {
+                        // Apply crop
+                        exitCropMode(true);
+                        // Remove active class from crop button
+                        const cropBtn = editorEl.querySelector('.custom-crop-btn');
+                        if (cropBtn) cropBtn.classList.remove('crop-active');
+                    }
                 }
             });
             
@@ -469,6 +830,7 @@
         // Setup toolbar toggle after a delay to ensure UI is ready
         setTimeout(() => {
             setupToolbarToggle();
+            setupCropButton();
         }, 500);
     });
 
@@ -545,12 +907,19 @@
         padding: 8px 12px;
     }
     
-    /* Hide the filter button */
-    :global(.tui-image-editor-menu .tie-btn-filter){
+    /* Hide the filter button and crop button */
+    :global(.tui-image-editor-menu .tie-btn-filter),
+    :global(.tui-image-editor-menu .tie-btn-crop){
         display: none !important;
     }
     :global(.tui-image-editor-header-logo){
         display: none !important;
+    }
+    
+    /* Custom crop button active state */
+    :global(.tui-image-editor-item.crop-active) {
+        background-color: rgba(0, 255, 0, 0.1) !important;
+        border: 1px solid #00ff00 !important;
     }
     
     /* Reset zoom button styles */
