@@ -362,72 +362,6 @@
                     currentActiveMenu = null;
                 }
             });
-            
-            // Helper function to add close button to a submenu
-            const addCloseButtonToSubmenu = (submenu: HTMLElement) => {
-                // Check if close button already exists
-                if (!submenu.querySelector('.custom-submenu-close')) {
-                    const closeBtn = document.createElement('div');
-                    closeBtn.className = 'custom-submenu-close';
-                    closeBtn.innerHTML = '✕ 隐藏面板';
-                    closeBtn.style.cssText = `
-                        cursor: pointer;
-                        padding: 8px 12px;
-                        background: rgba(0, 123, 255, 0.1);
-                        text-align: center;
-                        font-size: 12px;
-                        color: #333;
-                        border-bottom: 1px solid #e0e0e0;
-                        margin-bottom: 8px;
-                        user-select: none;
-                        font-weight: 500;
-                    `;
-                    closeBtn.addEventListener('click', () => {
-                        submenu.style.display = 'none';
-                        currentActiveMenu = null;
-                    });
-                    submenu.insertBefore(closeBtn, submenu.firstChild);
-                    console.log('Added close button to submenu');
-                }
-            };
-            
-            // Add close button to existing submenus
-            const existingSubmenus = editorEl.querySelectorAll('.tui-image-editor-submenu');
-            existingSubmenus.forEach((submenu: HTMLElement) => {
-                addCloseButtonToSubmenu(submenu);
-            });
-            
-            // Watch for new submenus being added
-            const observer = new MutationObserver((mutations) => {
-                mutations.forEach((mutation) => {
-                    mutation.addedNodes.forEach((node) => {
-                        if (node instanceof HTMLElement) {
-                            // Check if the node itself is a submenu
-                            if (node.classList.contains('tui-image-editor-submenu')) {
-                                addCloseButtonToSubmenu(node);
-                            }
-                            // Also check children in case submenu is nested
-                            const submenus = node.querySelectorAll('.tui-image-editor-submenu');
-                            submenus.forEach((submenu: HTMLElement) => {
-                                addCloseButtonToSubmenu(submenu);
-                            });
-                        }
-                    });
-                });
-            });
-            
-            observer.observe(editorEl, { childList: true, subtree: true });
-            
-            // Also periodically check for submenus (fallback)
-            const checkInterval = setInterval(() => {
-                const submenus = editorEl.querySelectorAll('.tui-image-editor-submenu');
-                submenus.forEach((submenu: HTMLElement) => {
-                    addCloseButtonToSubmenu(submenu);
-                });
-            }, 500);
-            
-            // Clean up interval after 10 seconds
-            setTimeout(() => clearInterval(checkInterval), 10000);
         }, 300);
     }
 
@@ -503,7 +437,6 @@
         border-radius: 6px;
         z-index: 1000;
         height: inherit !important;
-        padding-top: 20px !important;
     }
     
     
@@ -520,14 +453,5 @@
     /* Improve submenu item visibility */
     :global(.tui-image-editor-submenu > div) {
         padding: 8px 12px;
-    }
-    
-    /* Style for custom close button */
-    :global(.custom-submenu-close) {
-        transition: background-color 0.2s;
-    }
-    
-    :global(.custom-submenu-close:hover) {
-        background: rgba(0, 123, 255, 0.2) !important;
     }
 </style>
